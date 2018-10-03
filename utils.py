@@ -1,12 +1,127 @@
+import os
 import keras
 import random
 import itertools
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from keras.preprocessing.sequence import pad_sequences
 
 MEAN_B, STD_B = 138.712, 16.100
 MEAN_M, STD_M =  36.346, 25.224
+
+def data_preprocess(x, random_noise=True, normalized=True):
+    length = x.shape[0]
+    # get x and then remove zeros (no info)
+    x = x[(x[:,0] > 0.0) * (x[:,1] > 0.0)]
+    
+    if normalized:
+        x[:,0] = (x[:,0] - MEAN_B)/STD_B
+        x[:,1] = (x[:,1] - MEAN_M)/STD_M
+    
+    # add random_noise
+    if random_noise:
+        # x1, x2 = np.mean(x, axis=0)
+        noise = np.array([[random.gauss(mu=0, sigma=0.01), 
+                           random.gauss(mu=0, sigma=0.01)] for _ in range(x.shape[0])], dtype=np.float32)
+        x = x + noise
+
+    # transpose to (n_channel, arbitrary length), then padd to (n_channel, length)
+    x = pad_sequences(np.transpose(x), padding='post', value=0.0, maxlen=length, dtype=np.float)
+
+    # transpose back to original shape and store
+    return np.transpose(x)
+
+
+def k_slice_X(Xvalid, Yvalid, k_slice=5, length=300, class_weight = {}):
+    """
+    # moving across a sequence, we slice out "k_slice" segments with a constant interval
+    # in order to increase validation data
+    # ex:  |------------------|
+    # 1    |------|
+    # 2       |------|
+    # 3          |------|
+    # 4             |------|
+    # 5                |------|
+    """
+    if not class_weight:
+        class_weight = dict()
+        for i in range(Yvalid.shape[1]):
+            class_weight[i] = 1
+
+    intvl = (Xvalid.shape[1] - length)//k_slice
+
+    Xtest = np.empty((Xvalid.shape[0]*k_slice, length, Xvalid.shape[2]))
+    Ytest = np.empty((Yvalid.shape[0]*k_slice, Yvalid.shape[1]))
+    Wtest = np.empty((Yvalid.shape[0]*k_slice,))
+
+    for k in range(k_slice):
+        st = k * Xvalid.shape[0]
+        for i in range(Xvalid.shape[0]):
+            # print(st+i)
+            Xtest[st+i,:,:] = data_preprocess(Xvalid[i,k*intvl:(k*intvl+length),:])
+            Ytest[st+i,:] = Yvalid[i,:]
+            Wtest[st+i] = class_weight[np.argmax(Yvalid[i,:])]
+    return Xtest, Ytest, Wtest
+
+def get_n_zeros(d):
+    n_zeros = list()
+    for i in range(d.shape[0]):
+        n_zeros.append(sum(d[i,:] ==0))
+    return np.array(n_zeros)
+
+def plot_confusion_matrix(cm, classes,
+                          normalize=False,
+                          title='Confusion matrix',
+                          cmap=plt.cm.Blues):
+    """
+    This function prints and plots the confusion matrix.
+    Normalization can be applied by setting `normalize=True`.
+    """
+    if normalize:
+        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        print("Normalized confusion matrix")
+    else:
+        print('Confusion matrix, without normalization')
+
+    print(cm)
+
+    plt.imshow(cm, interpolation='nearest', cmap=cmap)
+    plt.title(title)
+    plt.colorbar()
+    tick_marks = np.arange(len(classes))
+    plt.xticks(tick_marks, classes, rotation=45)
+    plt.yticks(tick_marks, classes)
+
+    fmt = '.2f' if normalize else 'd'
+    thresh = cm.max() / 2.
+    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+        plt.text(j, i, format(cm[i, j], fmt),
+                 horizontalalignment="center",
+                 color="white" if cm[i, j] > thresh else "black")
+
+    plt.tight_layout()
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label')
+
+def plot_keras_csv_logger(csv_logger, save_dir='', accuracy=False):
+    loss = pd.read_table(csv_logger.filename, delimiter=',')
+    print('min val_loss {0} at epoch {1}'.format(min(loss.val_loss), np.argmin(loss.val_loss)))
+    plt.plot(loss.epoch, loss.loss, label='loss')
+    plt.plot(loss.epoch, loss.val_loss, label='val_loss')
+    plt.legend()
+    plt.xlabel('epoch')
+    plt.ylabel('loss')
+    plt.savefig(os.path.join(save_dir, 'loss.png'))
+
+    if accuracy:
+        print('max val_accu {0} at epoch {1}'.format(max(loss.val_accu), np.argmax(loss.val_accu)))
+        plt.plot(loss.epoch, loss.acc, label='accu')
+        plt.plot(loss.epoch, loss.val_acc, label='val_accu')
+        plt.legend()
+        plt.xlabel('epoch')
+        plt.ylabel('accuracy')
+        plt.savefig(os.path.join(save_dir, 'accu.png'))
 
 class DataGenerator(keras.utils.Sequence):
     'Generates data for Keras'
@@ -94,66 +209,3 @@ class DataGenerator(keras.utils.Sequence):
         
         # transpose back to original shape and store
         return np.transpose(x)
-
-def plot_confusion_matrix(cm, classes,
-                          normalize=False,
-                          title='Confusion matrix',
-                          cmap=plt.cm.Blues):
-    """
-    This function prints and plots the confusion matrix.
-    Normalization can be applied by setting `normalize=True`.
-    """
-    if normalize:
-        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-        print("Normalized confusion matrix")
-    else:
-        print('Confusion matrix, without normalization')
-
-    print(cm)
-
-    plt.imshow(cm, interpolation='nearest', cmap=cmap)
-    plt.title(title)
-    plt.colorbar()
-    tick_marks = np.arange(len(classes))
-    plt.xticks(tick_marks, classes, rotation=45)
-    plt.yticks(tick_marks, classes)
-
-    fmt = '.2f' if normalize else 'd'
-    thresh = cm.max() / 2.
-    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
-        plt.text(j, i, format(cm[i, j], fmt),
-                 horizontalalignment="center",
-                 color="white" if cm[i, j] > thresh else "black")
-
-    plt.tight_layout()
-    plt.ylabel('True label')
-    plt.xlabel('Predicted label')
-
-
-def data_preprocess(x, random_noise=True):
-    length = x.shape[0]
-    # get x and then remove zeros (no info)
-    x = x[(x[:,0] > 0.0) * (x[:,1] > 0.0)]
-    
-    x[:,0] = (x[:,0] - MEAN_B)/STD_B
-    x[:,1] = (x[:,1] - MEAN_M)/STD_M
-    
-    # add random_noise
-    if random_noise:
-        # x1, x2 = np.mean(x, axis=0)
-        noise = np.array([[random.gauss(mu=0, sigma=0.01), 
-                           random.gauss(mu=0, sigma=0.01)] for _ in range(x.shape[0])], dtype=np.float32)
-        x = x + noise
-
-    # transpose to (n_channel, arbitrary length), then padd to (n_channel, length)
-    x = pad_sequences(np.transpose(x), padding='post', value=0.0, maxlen=length, dtype=np.float)
-
-    # transpose back to original shape and store
-    return np.transpose(x)
-
-
-def get_n_zeros(d):
-    n_zeros = list()
-    for i in range(d.shape[0]):
-        n_zeros.append(sum(d[i,:] ==0))
-    return np.array(n_zeros)
