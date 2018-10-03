@@ -4,13 +4,16 @@ import random
 import argparse
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
 
 from keras.models import Model, load_model
 from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau
 from keras.optimizers import Adam, SGD, Adamax
 
-from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 
@@ -54,6 +57,7 @@ def main():
         os.makedirs(FLAG.model_save)
     
     print("===== train =====")
+
     train(FLAG)
 
     # # input, output
@@ -178,11 +182,12 @@ def train(FLAG):
                         validation_data=(Xtest, Ytest, Wtest),
                         steps_per_epoch=50, 
                         epochs=FLAG.epoch,
+                        verbose=0,
                         callbacks=[csv_logger,
                                 reduce_lr, 
                                 checkpoint])
     # plot csv logger
-    myutils.plot_keras_csv_logger(csv_logger, accuracy=True)
+    myutils.plot_keras_csv_logger(csv_logger, save_dir=FLAG.model_save, accuracy=True)
 
     # validation set
     trained_model = load_model(os.path.join(FLAG.model_save,'model.h5'))
@@ -211,10 +216,12 @@ def train(FLAG):
     plt.savefig(os.path.join(FLAG.model_save, 'voting_confusion_matrix.png'))
     plt.close()
 
+    # traing.log
     loss = pd.read_table(csv_logger.filename, delimiter=',')
     best_val_loss = np.min(loss.val_loss)
     best_epoch = np.argmin(loss.val_loss)
 
+    # 
     tmp = ypred_aug.reshape(FLAG.k_slice,-1)
     savg_val_accu = 0.0
     for i in range(tmp.shape[0]):
@@ -231,13 +238,15 @@ def train(FLAG):
     sav['vote_val_accu'] = vote_val_accu
     sav['savg_val_accu'] = savg_val_accu
 
-    dnew = pd.DataFrame.from_dict(sav)
-    if os.path.exist(FLAG.summary_file):
-        dori = pd.DataFrame.from_csv(FLAG.summary_file)
+    dnew = pd.DataFrame(sav, index=[0])
+    if os.path.exists(FLAG.summary_file):
+        dori = pd.read_csv(FLAG.summary_file)
         dori = pd.concat([dori, dnew])
         dori.to_csv(FLAG.summary_file, index=False)
     else:
         dnew.to_csv(FLAG.summary_file, index=False)
+
+    print(FLAG.summary_file)
 
 if __name__ == '__main__':
     main()
