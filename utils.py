@@ -4,6 +4,8 @@ import random
 import itertools
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from keras.preprocessing.sequence import pad_sequences
 
@@ -113,15 +115,17 @@ def plot_keras_csv_logger(csv_logger, save_dir='', accuracy=False):
     plt.xlabel('epoch')
     plt.ylabel('loss')
     plt.savefig(os.path.join(save_dir, 'loss.png'))
+    plt.close()
 
     if accuracy:
-        print('max val_accu {0} at epoch {1}'.format(max(loss.val_accu), np.argmax(loss.val_accu)))
+        print('max val_accu {0} at epoch {1}'.format(max(loss.val_acc), np.argmax(loss.val_acc)))
         plt.plot(loss.epoch, loss.acc, label='accu')
         plt.plot(loss.epoch, loss.val_acc, label='val_accu')
         plt.legend()
         plt.xlabel('epoch')
         plt.ylabel('accuracy')
         plt.savefig(os.path.join(save_dir, 'accu.png'))
+        plt.close()
 
 class DataGenerator(keras.utils.Sequence):
     'Generates data for Keras'
