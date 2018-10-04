@@ -225,7 +225,7 @@ def train(FLAG):
     sav['vote_val_accu'] = vote_val_accu
     sav['savg_val_accu'] = savg_val_accu
     
-    for i in range(len(n_classes)):
+    for i in range(n_classes):
         sav['recall-{0}'.format(i)] = recall[i]
         sav['precision-{0}'.format(i)] = precision[i]
 
