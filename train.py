@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 
 
 from keras.models import Model, load_model
-from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau
+from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
 from keras.optimizers import Adam, SGD, Adamax
 
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
@@ -38,7 +38,7 @@ def main():
     parser.add_argument('-f' ,'--filters', type=int, default=64, help='base number of filters')
     parser.add_argument('-ly' ,'--layers', type=int, default=10, help='number of residual layers')
     parser.add_argument('-a' ,'--activation', type=str, default='relu', help='activation function')
-    parser.add_argument('-i' ,'--kernel_initializer', type=str, default='he_normal', help='kernel initialization method')
+    parser.add_argument('-i' ,'--kernel_initializer', type=str, default='RandomNormal', help='kernel initialization method')
     parser.add_argument('-l2','--l2', type=float, default=0.0, help='coefficient of l2 regularization')
 
     # hyper-parameters
@@ -149,8 +149,8 @@ def train(FLAG):
                                                 save_weights_only=False,
                                                 mode='min',
                                                 period=1)
-
-    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor = 0.5, patience = 5, min_lr = 0, cooldown = 5, verbose = True)
+    earlystop = EarlyStopping(monitor = 'val_loss', patience=20, verbose=1)
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor = 0.5, patience = 10, min_lr = 0, cooldown = 5, verbose = True)
 
     # fit
     model.fit_generator(generator=my_generator(Xtrain, Ytrain, 
@@ -167,7 +167,8 @@ def train(FLAG):
                         verbose=0,
                         callbacks=[csv_logger,
                                 reduce_lr, 
-                                checkpoint])
+                                checkpoint,
+                                earlystop])
     # plot csv logger
     myutils.plot_keras_csv_logger(csv_logger, save_dir=FLAG.model_save, accuracy=True)
 
@@ -187,7 +188,7 @@ def train(FLAG):
     plt.close()
 
     # aggregate by voting
-    ypred = (np.mean(ypred_aug.reshape(FLAG.k_slice,-1), axis=0) > 0.6) + 0 # voting
+    ypred = (np.mean(ypred_aug.reshape(FLAG.k_slice,-1), axis=0) > 0.5) + 0 # voting
     ytest = np.argmax(Yvalid, axis=1)
 
     # calculate aggregated results
@@ -232,7 +233,7 @@ def train(FLAG):
     # append into summary files
     dnew = pd.DataFrame(sav, index=[0])
     if os.path.exists(FLAG.summary_file):
-        dori = pd.read_csv(FLAG.summary_file, index=False)
+        dori = pd.read_csv(FLAG.summary_file)
         dori = pd.concat([dori, dnew])
         dori.to_csv(FLAG.summary_file, index=False)
     else:
