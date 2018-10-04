@@ -29,8 +29,8 @@ def main():
     # input parameter
     parser.add_argument('-l' ,'--length', type=int, default=300, help='length of input')
     parser.add_argument('-c' ,'--n_channel', type=int, default=2, help='number of input channels')
-    parser.add_argument('-rn','--random_noise', type=bool, default=False, help='add Gaussian noise (mean=0, std=0.01) into inputs')
-    parser.add_argument('-nm','--normalized', type=bool, default=True, help='whether conduct channel-wise normalization')
+    parser.add_argument('-rn','--random_noise', type=int, default=0, help='add Gaussian noise (mean=0, std=0.01) into inputs')
+    parser.add_argument('-nm','--normalized', type=int, default=1, help='whether conduct channel-wise normalization')
     parser.add_argument('-ks','--k_slice', type=int, default=5, help='a input will be sliced into k_slice segments when testing')
 
     # model parameters
@@ -44,7 +44,7 @@ def main():
     # hyper-parameters
     parser.add_argument('-bs','--batch_size', type=int, default=16, help='batch_size')
     parser.add_argument('-ep','--epoch', type=int, default=100, help='epoch')
-    parser.add_argument('-wb','--weight_balance', type=bool, default=True, help='whether weight balancing or not')
+    parser.add_argument('-wb','--weight_balance', type=int, default=1, help='whether weight balancing or not')
     parser.add_argument('-th','--acceptable_zeros_threshold', type=float, default=90, help='acceptable number of missing values in raw data')
     parser.add_argument('-g' ,'--gpu_id', type=str, default='0', help='GPU ID')
     parser.add_argument('-rs' ,'--random_state', type=int, default=13, help='random state when train_test_split')
@@ -59,24 +59,6 @@ def main():
     print("===== train =====")
 
     train(FLAG)
-
-    # # input, output
-    # FLAG.batch_size = 16
-    # FLAG.length = 300
-    # FLAG.n_channel = 2
-    # FLAG.target = 'variability' # ['variability', 'deceleration', 'management', 'UA']
-    # FLAG.model_save = os.path.join('/data/put_data/cmchang/gynecology/model/', FLAG.target+'_filter_interpolate')
-    # FLAG.weight_balance = True
-    # FLAG.acceptable_zeros_threshold = 90
-    # FLAG.data_dir = "/data/put_data/cmchang/gynecology/data/"
-    # # model configuration
-    # # Convolution
-    # FLAG.kernel_size = 3
-    # FLAG.filters = 64
-    # FLAG.layers = 10
-    # FLAG.activation='relu'
-    # FLAG.kernel_initializer = 'he_normal'
-    # FLAG.l2 = 0.0
 
 def train(FLAG):
     os.environ['CUDA_VISIBLE_DEVICES'] = FLAG.gpu_id
@@ -170,7 +152,7 @@ def train(FLAG):
 
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor = 0.5, patience = 5, min_lr = 0, cooldown = 5, verbose = True)
 
-    # Train model on dataset
+    # fit
     model.fit_generator(generator=my_generator(Xtrain, Ytrain, 
                                             length=FLAG.length, 
                                             n_channel=FLAG.n_channel, 
@@ -189,26 +171,29 @@ def train(FLAG):
     # plot csv logger
     myutils.plot_keras_csv_logger(csv_logger, save_dir=FLAG.model_save, accuracy=True)
 
-    # validation set
+    # evaluate validation set
     trained_model = load_model(os.path.join(FLAG.model_save,'model.h5'))
     Pred = trained_model.predict(Xtest)
 
+    # evaluate by every segment
     ypred_aug = np.argmax(Pred , axis=1)
     ytest_aug = np.argmax(Ytest, axis=1)
 
     cfm = confusion_matrix(y_pred=ypred_aug, y_true=ytest_aug)
 
-    # Plot non-normalized confusion matrix
     plt.figure()
     myutils.plot_confusion_matrix(cfm, classes=np.arange(n_classes), title='Confusion matrix, without normalization')
     plt.savefig(os.path.join(FLAG.model_save, 'segment_confusion_matrix.png'))
     plt.close()
 
-    # aggregate
+    # aggregate by voting
     ypred = (np.mean(ypred_aug.reshape(FLAG.k_slice,-1), axis=0) > 0.6) + 0 # voting
     ytest = np.argmax(Yvalid, axis=1)
 
+    # calculate aggregated results
     cfm = confusion_matrix(y_pred=ypred, y_true=ytest)
+    recall = np.diag(cfm) / np.sum(cfm, axis=1)
+    precision = np.diag(cfm) / np.sum(cfm, axis=0)
     vote_val_accu = accuracy_score(y_pred=ypred, y_true=ytest)
 
     plt.figure()
@@ -216,12 +201,13 @@ def train(FLAG):
     plt.savefig(os.path.join(FLAG.model_save, 'voting_confusion_matrix.png'))
     plt.close()
 
-    # traing.log
+    # read traing.log
     loss = pd.read_table(csv_logger.filename, delimiter=',')
     best_val_loss = np.min(loss.val_loss)
     best_epoch = np.argmin(loss.val_loss)
 
-    # 
+    # calculate average accuracy from segments
+    # and voting accuracy
     tmp = ypred_aug.reshape(FLAG.k_slice,-1)
     savg_val_accu = 0.0
     for i in range(tmp.shape[0]):
@@ -232,15 +218,21 @@ def train(FLAG):
     print('avg accu={0}'.format(savg_val_accu))
     print('vote accu={0}'.format(vote_val_accu))
 
+    # save into dictionary
     sav = vars(FLAG)
     sav['epoch'] = best_epoch
     sav['val_loss'] = best_val_loss
     sav['vote_val_accu'] = vote_val_accu
     sav['savg_val_accu'] = savg_val_accu
+    
+    for i in range(len(n_classes)):
+        sav['recall-{0}'.format(i)] = recall[i]
+        sav['precision-{0}'.format(i)] = precision[i]
 
+    # append into summary files
     dnew = pd.DataFrame(sav, index=[0])
     if os.path.exists(FLAG.summary_file):
-        dori = pd.read_csv(FLAG.summary_file)
+        dori = pd.read_csv(FLAG.summary_file, index=False)
         dori = pd.concat([dori, dnew])
         dori.to_csv(FLAG.summary_file, index=False)
     else:
